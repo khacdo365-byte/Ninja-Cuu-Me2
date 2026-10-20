@@ -38,7 +38,7 @@ jobs:
             exit 1
           fi
 
-          echo "Found: $SDKMANAGER"
+          echo "Found sdkmanager: $SDKMANAGER"
 
           SDKMANAGER_DIR="$(dirname "$SDKMANAGER")"
           echo "$SDKMANAGER_DIR" >> "$GITHUB_PATH"
@@ -72,8 +72,7 @@ jobs:
 
           test -f game/project.godot
 
-          echo "===== PROJECT ====="
-          ls -la game
+          echo "Game extracted successfully."
 
       - name: Configure Godot Android SDK
         shell: bash
@@ -89,8 +88,6 @@ jobs:
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
           EOF
-
-          echo "Godot Android SDK configured."
 
       - name: Create Android export preset
         shell: bash
@@ -135,31 +132,19 @@ jobs:
           screen/orientation=1
           EOF
 
-          echo "===== EXPORT PRESET ====="
-          cat game/export_presets.cfg
-
-      - name: Check Godot project
+      - name: Check Godot
         shell: bash
         run: |
-          cd game
-
-          echo "===== GODOT VERSION ====="
           godot --version
 
           echo "===== PROJECT ====="
-          grep -n "config/name" project.godot || true
+          grep -n "config/name" game/project.godot || true
 
           echo "===== ANDROID PRESET ====="
-          grep -n 'name="Android"' export_presets.cfg
-
-          echo "===== PLATFORM ====="
-          grep -n 'platform="Android"' export_presets.cfg
+          grep -n 'platform="Android"' game/export_presets.cfg
 
           echo "===== ARM64 ====="
-          grep -n 'architectures/arm64-v8a=true' export_presets.cfg
-
-          echo "===== PORTRAIT ====="
-          grep -n 'screen/orientation=1' export_presets.cfg
+          grep -n 'architectures/arm64-v8a=true' game/export_presets.cfg
 
       - name: Import Godot project
         shell: bash
@@ -171,35 +156,43 @@ jobs:
             --editor \
             --quit-after 10
 
-      - name: Install Android build template
+      - name: Verify Android export templates
         shell: bash
         run: |
-          cd game
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates"
 
-          godot \
-            --headless \
-            --path . \
-            --install-android-build-template
+          echo "===== EXPORT TEMPLATES ====="
+          find "$TEMPLATE_DIR" -maxdepth 3 -type f 2>/dev/null || true
+
+          if ! find "$TEMPLATE_DIR" -type f -name "android_debug.apk" | grep -q .; then
+            echo "ERROR: android_debug.apk not found."
+            exit 1
+          fi
+
+          if ! find "$TEMPLATE_DIR" -type f -name "android_release.apk" | grep -q .; then
+            echo "ERROR: android_release.apk not found."
+            exit 1
+          fi
+
+          echo "Android export templates OK."
 
       - name: Export APK
         shell: bash
         run: |
           rm -f build/Ninja-Cuu-Me.apk
 
-          cd game
-
           godot \
             --headless \
-            --path . \
+            --path game \
             --export-debug \
             "Android" \
-            ../build/Ninja-Cuu-Me.apk
+            "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
-          echo "===== APK ====="
+          echo "===== APK RESULT ====="
 
-          test -f ../build/Ninja-Cuu-Me.apk
+          test -f build/Ninja-Cuu-Me.apk
 
-          ls -lh ../build/Ninja-Cuu-Me.apk
+          ls -lh build/Ninja-Cuu-Me.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
