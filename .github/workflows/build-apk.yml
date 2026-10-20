@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    name: Build Android APK
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout
@@ -24,15 +25,37 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android SDK
+      - name: Locate Android SDK
+        shell: bash
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-      - name: Setup Godot
+          SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager 2>/dev/null | head -n 1)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            exit 1
+          fi
+
+          echo "Found: $SDKMANAGER"
+
+          SDKMANAGER_DIR="$(dirname "$SDKMANAGER")"
+          echo "$SDKMANAGER_DIR" >> "$GITHUB_PATH"
+
+      - name: Install Android SDK packages
+        shell: bash
+        run: |
+          sdkmanager --version
+
+          yes | sdkmanager --licenses || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0"
+
+      - name: Setup Godot 4.6.3
         uses: chickensoft-games/setup-godot@v2
         with:
           version: 4.6.3
@@ -40,13 +63,20 @@ jobs:
           include-templates: true
 
       - name: Extract game
+        shell: bash
         run: |
           rm -rf game build
           mkdir -p game build
+
           unzip -o Ninja_Cuu_Me_AndroidReady.zip -d game
+
           test -f game/project.godot
 
-      - name: Configure Android
+          echo "===== PROJECT ====="
+          ls -la game
+
+      - name: Configure Godot Android SDK
+        shell: bash
         run: |
           mkdir -p "$HOME/.config/godot"
 
@@ -60,24 +90,36 @@ jobs:
           export/android/debug_keystore_pass = "android"
           EOF
 
-      - name: Install Android export template
+          echo "Godot Android SDK configured."
+
+      - name: Install Godot Android export templates
+        shell: bash
         run: |
           GODOT_VERSION="4.6.3"
           TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/$GODOT_VERSION"
+
           mkdir -p "$TEMPLATE_DIR"
 
           wget -q \
             "https://github.com/godotengine/godot-builds/releases/download/$GODOT_VERSION/Godot_v${GODOT_VERSION}_export_templates.tpz" \
-            -O /tmp/templates.tpz
+            -O /tmp/godot_templates.tpz
 
-          unzip -q /tmp/templates.tpz -d /tmp/godot_templates
+          rm -rf /tmp/godot_templates
+          mkdir -p /tmp/godot_templates
 
-          find /tmp/godot_templates -type f -exec cp {} "$TEMPLATE_DIR/" \;
+          unzip -q /tmp/godot_templates.tpz -d /tmp/godot_templates
 
-          echo "Installed templates:"
+          if [ -d "/tmp/godot_templates/templates" ]; then
+            cp -R /tmp/godot_templates/templates/. "$TEMPLATE_DIR/"
+          else
+            cp -R /tmp/godot_templates/. "$TEMPLATE_DIR/"
+          fi
+
+          echo "===== EXPORT TEMPLATES ====="
           find "$TEMPLATE_DIR" -maxdepth 1 -type f -print
 
-      - name: Create Android preset
+      - name: Create Android export preset
+        shell: bash
         run: |
           cat > game/export_presets.cfg <<'EOF'
           [preset.0]
@@ -92,7 +134,7 @@ jobs:
           include_filter=""
           exclude_filter=""
           export_path="build/Ninja-Cuu-Me.apk"
-          patch_list=PackedStringArray()
+          patches=PackedStringArray()
           encryption_include_filters=""
           encryption_exclude_filters=""
           encrypt_pck=false
@@ -112,7 +154,6 @@ jobs:
 
           package/unique_name="com.ninjacuume.game"
           package/name="Ninja Cuu Me"
-          package/signed=true
 
           version/code=1
           version/name="1.0"
@@ -120,23 +161,70 @@ jobs:
           screen/orientation=1
           EOF
 
-      - name: Verify
+          echo "===== EXPORT PRESET ====="
+          cat game/export_presets.cfg
+
+      - name: Check Godot project
+        shell: bash
         run: |
           cd game
+
+          echo "===== GODOT VERSION ====="
           godot --version
-          test -f project.godot
-          test -f export_presets.cfg
-          grep 'name="Android"' export_presets.cfg
-          grep 'platform="Android"' export_presets.cfg
+
+          echo "===== PROJECT ====="
+          grep -n "config/name" project.godot || true
+
+          echo "===== PRESET ====="
+          grep -n 'name="Android"' export_presets.cfg
+
+          echo "===== PLATFORM ====="
+          grep -n 'platform="Android"' export_presets.cfg
+
+          echo "===== ARM64 ====="
+          grep -n 'architectures/arm64-v8a=true' export_presets.cfg
+
+          echo "===== ORIENTATION ====="
+          grep -n 'screen/orientation=1' export_presets.cfg
+
+      - name: Import project
+        shell: bash
+        run: |
+          cd game
+
+          godot \
+            --headless \
+            --editor \
+            --quit-after 10
+
+      - name: Install Android build template
+        shell: bash
+        run: |
+          cd game
+
+          godot \
+            --headless \
+            --path . \
+            --install-android-build-template
 
       - name: Export APK
+        shell: bash
         run: |
+          rm -f build/Ninja-Cuu-Me.apk
+
           cd game
-          godot --headless --path . \
-            --export-debug "Android" \
+
+          godot \
+            --headless \
+            --path . \
+            --export-debug \
+            "Android" \
             ../build/Ninja-Cuu-Me.apk
 
+          echo "===== APK ====="
+
           test -f ../build/Ninja-Cuu-Me.apk
+
           ls -lh ../build/Ninja-Cuu-Me.apk
 
       - name: Upload APK
@@ -144,5 +232,3 @@ jobs:
         with:
           name: Ninja-Cuu-Me-APK
           path: build/Ninja-Cuu-Me.apk
-          if-no-files-found: error
-          retention-days: 14
