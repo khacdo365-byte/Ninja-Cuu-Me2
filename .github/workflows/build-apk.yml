@@ -62,6 +62,13 @@ jobs:
           mkdir -p game build
           unzip -o Ninja_Cuu_Me_AndroidReady.zip -d game
           test -f game/project.godot
+                - name: Fix Android texture export setting
+        shell: bash
+        run: |
+          if ! grep -q '^textures/vram_compression/import_etc2_astc=true$' game/project.godot; then
+            sed -i '/^\[rendering\]$/a textures/vram_compression/import_etc2_astc=true' game/project.godot
+          fi
+          grep -n 'textures/vram_compression/import_etc2_astc' game/project.godot
 
       - name: Import Godot project
         run: |
