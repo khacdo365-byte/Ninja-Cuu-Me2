@@ -92,32 +92,6 @@ jobs:
 
           echo "Godot Android SDK configured."
 
-      - name: Install Godot Android export templates
-        shell: bash
-        run: |
-          GODOT_VERSION="4.6.3"
-          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/$GODOT_VERSION"
-
-          mkdir -p "$TEMPLATE_DIR"
-
-          wget -q \
-            "https://github.com/godotengine/godot-builds/releases/download/$GODOT_VERSION/Godot_v${GODOT_VERSION}_export_templates.tpz" \
-            -O /tmp/godot_templates.tpz
-
-          rm -rf /tmp/godot_templates
-          mkdir -p /tmp/godot_templates
-
-          unzip -q /tmp/godot_templates.tpz -d /tmp/godot_templates
-
-          if [ -d "/tmp/godot_templates/templates" ]; then
-            cp -R /tmp/godot_templates/templates/. "$TEMPLATE_DIR/"
-          else
-            cp -R /tmp/godot_templates/. "$TEMPLATE_DIR/"
-          fi
-
-          echo "===== EXPORT TEMPLATES ====="
-          find "$TEMPLATE_DIR" -maxdepth 1 -type f -print
-
       - name: Create Android export preset
         shell: bash
         run: |
@@ -175,7 +149,7 @@ jobs:
           echo "===== PROJECT ====="
           grep -n "config/name" project.godot || true
 
-          echo "===== PRESET ====="
+          echo "===== ANDROID PRESET ====="
           grep -n 'name="Android"' export_presets.cfg
 
           echo "===== PLATFORM ====="
@@ -184,10 +158,10 @@ jobs:
           echo "===== ARM64 ====="
           grep -n 'architectures/arm64-v8a=true' export_presets.cfg
 
-          echo "===== ORIENTATION ====="
+          echo "===== PORTRAIT ====="
           grep -n 'screen/orientation=1' export_presets.cfg
 
-      - name: Import project
+      - name: Import Godot project
         shell: bash
         run: |
           cd game
@@ -232,3 +206,5 @@ jobs:
         with:
           name: Ninja-Cuu-Me-APK
           path: build/Ninja-Cuu-Me.apk
+          if-no-files-found: error
+          retention-days: 14
