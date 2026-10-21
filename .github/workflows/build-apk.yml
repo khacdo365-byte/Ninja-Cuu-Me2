@@ -29,9 +29,6 @@ jobs:
       - name: Locate Android SDK
         shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
           SDKMANAGER="$(find "$ANDROID_HOME" -type f -name sdkmanager 2>/dev/null | head -n 1)"
 
           if [ -z "$SDKMANAGER" ]; then
@@ -46,7 +43,6 @@ jobs:
         shell: bash
         run: |
           sdkmanager --version
-
           yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager \
@@ -65,9 +61,7 @@ jobs:
         shell: bash
         run: |
           rm -rf game build
-
-          mkdir -p game
-          mkdir -p build
+          mkdir -p game build
 
           unzip -o Ninja_Cuu_Me_AndroidReady.zip -d game
 
@@ -76,14 +70,23 @@ jobs:
           echo "===== GAME FILES ====="
           ls -la game
 
-          echo "===== ORIGINAL EXPORT PRESET ====="
-          test -f game/export_presets.cfg
-          cat game/export_presets.cfg
-
       - name: Configure Godot Android SDK
         shell: bash
         run: |
           mkdir -p "$HOME/.config/godot"
+          mkdir -p "$HOME/.android"
+
+          if [ ! -f "$HOME/.android/debug.keystore" ]; then
+            keytool -genkeypair \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
 
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
@@ -95,28 +98,103 @@ jobs:
           export/android/debug_keystore_pass = "android"
           EOF
 
-      - name: Check Android preset
+      - name: Create Android export preset
         shell: bash
         run: |
           cd game
 
-          echo "===== GODOT VERSION ====="
-          godot --version
+          cat > export_presets.cfg <<'EOF'
+          [preset.0]
 
-          echo "===== ANDROID PRESETS ====="
-          grep -n 'platform="Android"' export_presets.cfg || true
+          name="Android"
+          platform="Android"
+          runnable=true
+          dedicated_server=false
 
-          echo "===== PRESET NAMES ====="
-          grep -n '^name=' export_presets.cfg || true
+          custom_features=""
+          export_filter="all_resources"
+          include_filter=""
+          exclude_filter=""
+          export_path=""
 
-          echo "===== EXPORT PATHS ====="
-          grep -n 'export_path=' export_presets.cfg || true
+          patch_list=PackedStringArray()
 
-          echo "===== ANDROID OPTIONS ====="
-          grep -n 'architectures/' export_presets.cfg || true
+          encryption_include_filters=""
+          encryption_exclude_filters=""
+          encryption_key=""
+          encrypt_pck=false
+          encrypt_directory=false
 
-          echo "===== PACKAGE ====="
-          grep -n 'package/' export_presets.cfg || true
+          [preset.0.options]
+
+          custom_template/debug=""
+          custom_template/release=""
+
+          gradle_build/use_gradle_build=false
+          gradle_build/gradle_build_directory=""
+          gradle_build/android_source_template=""
+          gradle_build/gradle_build_use_custom_build=false
+          gradle_build/gradle_build_export_format=0
+
+          architectures/armeabi-v7a=false
+          architectures/arm64-v8a=true
+          architectures/x86=false
+          architectures/x86_64=false
+
+          package/unique_name="com.ninjacuume.app"
+          package/name="Ninja Cuu Me"
+          package/launcher_name="Ninja Cuu Me"
+          package/version_code=1
+          package/version_name="1.0"
+
+          package/signed=true
+          package/app_category=2
+          package/retain_data_on_uninstall=false
+          package/exclude_from_recents=false
+          package/show_in_recents=true
+          package/updates_url=""
+
+          package/keystore/debug=""
+          package/keystore/release=""
+          package/keystore/release_user=""
+          package/keystore/release_password=""
+          package/keystore/release_alias=""
+          package/keystore/release_alias_password=""
+
+          package/icon=""
+          package/splash_screen=""
+
+          launcher_icons/main_192x192=""
+          launcher_icons/adaptive_foreground_432x432=""
+          launcher_icons/adaptive_background_432x432=""
+          launcher_icons/adaptive_monochrome_432x432=""
+
+          graphics/opengl=true
+          graphics/driver/driver_name=""
+          graphics/rendering_method="gl_compatibility"
+          graphics/rendering_method.mobile="gl_compatibility"
+
+          screen/immersive_mode=true
+          screen/orientation=1
+
+          screen/support_small=true
+          screen/support_normal=true
+          screen/support_large=true
+          screen/support_xlarge=true
+
+          input_devices/keyboard/enable_input_methods=true
+
+          permissions/access_network_state=false
+          permissions/access_wifi_state=false
+          permissions/internet=true
+          permissions/read_external_storage=false
+          permissions/write_external_storage=false
+          permissions/vibrate=false
+          permissions/wake_lock=false
+          EOF
+
+          echo "===== EXPORT PRESET ====="
+          cat export_presets.cfg
 
       - name: Import Godot project
         shell: bash
@@ -133,16 +211,6 @@ jobs:
         run: |
           TEMPLATE_ROOT="$HOME/.local/share/godot/export_templates"
 
-          echo "===== EXPORT TEMPLATES ====="
-
-          find "$TEMPLATE_ROOT" \
-            -type f \
-            \( \
-              -name "android_debug.apk" \
-              -o -name "android_release.apk" \
-            \) \
-            -print 2>/dev/null || true
-
           DEBUG_TEMPLATE="$(find "$TEMPLATE_ROOT" \
             -type f \
             -name "android_debug.apk" \
@@ -154,35 +222,44 @@ jobs:
             2>/dev/null | head -n 1)"
 
           if [ -z "$DEBUG_TEMPLATE" ]; then
-            echo "ERROR: android_debug.apk not found."
+            echo "ERROR: android_debug.apk not found"
             exit 1
           fi
 
           if [ -z "$RELEASE_TEMPLATE" ]; then
-            echo "ERROR: android_release.apk not found."
+            echo "ERROR: android_release.apk not found"
             exit 1
           fi
 
-          echo "DEBUG TEMPLATE:"
-          echo "$DEBUG_TEMPLATE"
+          echo "DEBUG TEMPLATE: $DEBUG_TEMPLATE"
+          echo "RELEASE TEMPLATE: $RELEASE_TEMPLATE"
 
-          echo "RELEASE TEMPLATE:"
-          echo "$RELEASE_TEMPLATE"
-
-      - name: Check export configuration
+      - name: Check Android export
         shell: bash
         run: |
           cd game
 
-          echo "===== GODOT EXPORT LIST ====="
+          echo "===== GODOT VERSION ====="
+          godot --version
+
+          echo "===== PRESET ====="
+          grep -n 'name=' export_presets.cfg
+          grep -n 'platform=' export_presets.cfg
+          grep -n 'package/' export_presets.cfg
+          grep -n 'architectures/' export_presets.cfg
+
+          rm -f "$GITHUB_WORKSPACE/build/test.apk"
 
           godot \
             --headless \
             --path . \
             --export-debug \
             "Android" \
-            "$GITHUB_WORKSPACE/build/test.apk" \
-            --verbose 2>&1 | head -120 || true
+            "$GITHUB_WORKSPACE/build/test.apk"
+
+          test -f "$GITHUB_WORKSPACE/build/test.apk"
+
+          ls -lh "$GITHUB_WORKSPACE/build/test.apk"
 
       - name: Export debug APK
         shell: bash
