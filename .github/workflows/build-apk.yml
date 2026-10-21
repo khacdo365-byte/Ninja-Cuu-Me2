@@ -39,9 +39,7 @@ jobs:
             exit 1
           fi
 
-          echo "Found sdkmanager:"
-          echo "$SDKMANAGER"
-
+          echo "Found sdkmanager: $SDKMANAGER"
           echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
       - name: Install Android SDK
@@ -73,14 +71,16 @@ jobs:
 
           unzip -o Ninja_Cuu_Me_AndroidReady.zip -d game
 
-          if [ ! -f game/project.godot ]; then
-            echo "ERROR: project.godot not found"
-            exit 1
-          fi
+          test -f game/project.godot
 
-          echo "Game project found."
+          echo "===== GAME FILES ====="
+          ls -la game
 
-      - name: Configure Android SDK for Godot
+          echo "===== ORIGINAL EXPORT PRESET ====="
+          test -f game/export_presets.cfg
+          cat game/export_presets.cfg
+
+      - name: Configure Godot Android SDK
         shell: bash
         run: |
           mkdir -p "$HOME/.config/godot"
@@ -89,77 +89,34 @@ jobs:
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
-
           export/android/android_sdk_path = "$ANDROID_HOME"
           export/android/debug_keystore = "$HOME/.android/debug.keystore"
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
           EOF
 
-          echo "Android SDK configured."
-
-      - name: Create Android export preset
+      - name: Check Android preset
         shell: bash
         run: |
-          cat > game/export_presets.cfg <<'EOF'
-          [preset.0]
+          cd game
 
-          name="Android"
-          platform="Android"
-          runnable=true
-          advanced_options=false
-          dedicated_server=false
-          custom_features=""
-          export_filter="all_resources"
-          include_filter=""
-          exclude_filter=""
-          export_path="build/Ninja-Cuu-Me.apk"
-          patches=PackedStringArray()
-          encryption_include_filters=""
-          encryption_exclude_filters=""
-          encrypt_pck=false
-          encrypt_directory=false
-
-          [preset.0.options]
-
-          custom_template/debug=""
-          custom_template/release=""
-
-          gradle_build/use_gradle_build=false
-
-          architectures/armeabi-v7a=false
-          architectures/arm64-v8a=true
-          architectures/x86=false
-          architectures/x86_64=false
-
-          package/unique_name="com.ninjacuume.game"
-          package/name="Ninja Cuu Me"
-
-          version/code=1
-          version/name="1.0"
-
-          screen/orientation=1
-          EOF
-
-          echo "Android export preset created."
-
-      - name: Check Godot project
-        shell: bash
-        run: |
-          echo "===== GODOT ====="
+          echo "===== GODOT VERSION ====="
           godot --version
 
-          echo "===== PROJECT ====="
-          grep -n "config/name" game/project.godot || true
+          echo "===== ANDROID PRESETS ====="
+          grep -n 'platform="Android"' export_presets.cfg || true
 
-          echo "===== ANDROID PRESET ====="
-          grep -n 'platform="Android"' game/export_presets.cfg
+          echo "===== PRESET NAMES ====="
+          grep -n '^name=' export_presets.cfg || true
 
-          echo "===== ARM64 ====="
-          grep -n 'architectures/arm64-v8a=true' game/export_presets.cfg
+          echo "===== EXPORT PATHS ====="
+          grep -n 'export_path=' export_presets.cfg || true
 
-          echo "===== PORTRAIT ====="
-          grep -n 'screen/orientation=1' game/export_presets.cfg
+          echo "===== ANDROID OPTIONS ====="
+          grep -n 'architectures/' export_presets.cfg || true
+
+          echo "===== PACKAGE ====="
+          grep -n 'package/' export_presets.cfg || true
 
       - name: Import Godot project
         shell: bash
@@ -176,42 +133,74 @@ jobs:
         run: |
           TEMPLATE_ROOT="$HOME/.local/share/godot/export_templates"
 
-          echo "===== SEARCHING TEMPLATES ====="
+          echo "===== EXPORT TEMPLATES ====="
 
           find "$TEMPLATE_ROOT" \
             -type f \
-            \( -name "android_debug.apk" -o -name "android_release.apk" \) \
+            \( \
+              -name "android_debug.apk" \
+              -o -name "android_release.apk" \
+            \) \
             -print 2>/dev/null || true
 
-          DEBUG_TEMPLATE="$(find "$TEMPLATE_ROOT" -type f -name "android_debug.apk" 2>/dev/null | head -n 1)"
+          DEBUG_TEMPLATE="$(find "$TEMPLATE_ROOT" \
+            -type f \
+            -name "android_debug.apk" \
+            2>/dev/null | head -n 1)"
+
+          RELEASE_TEMPLATE="$(find "$TEMPLATE_ROOT" \
+            -type f \
+            -name "android_release.apk" \
+            2>/dev/null | head -n 1)"
 
           if [ -z "$DEBUG_TEMPLATE" ]; then
-            echo "ERROR: android_debug.apk was not found."
-            echo "Godot export templates are missing."
+            echo "ERROR: android_debug.apk not found."
             exit 1
           fi
 
-          echo "Android debug template:"
+          if [ -z "$RELEASE_TEMPLATE" ]; then
+            echo "ERROR: android_release.apk not found."
+            exit 1
+          fi
+
+          echo "DEBUG TEMPLATE:"
           echo "$DEBUG_TEMPLATE"
 
-      - name: Export APK
+          echo "RELEASE TEMPLATE:"
+          echo "$RELEASE_TEMPLATE"
+
+      - name: Check export configuration
+        shell: bash
+        run: |
+          cd game
+
+          echo "===== GODOT EXPORT LIST ====="
+
+          godot \
+            --headless \
+            --path . \
+            --export-debug \
+            "Android" \
+            "$GITHUB_WORKSPACE/build/test.apk" \
+            --verbose 2>&1 | head -120 || true
+
+      - name: Export debug APK
         shell: bash
         run: |
           rm -f "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
+          cd game
+
           godot \
             --headless \
-            --path "$GITHUB_WORKSPACE/game" \
+            --path . \
             --export-debug \
             "Android" \
             "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
-          echo "===== APK RESULT ====="
+          echo "===== APK ====="
 
-          if [ ! -f "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk" ]; then
-            echo "ERROR: APK was not created."
-            exit 1
-          fi
+          test -f "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
           ls -lh "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
