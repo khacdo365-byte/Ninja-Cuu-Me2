@@ -20,9 +20,11 @@ jobs:
         run: |
           set -e
           ZIP="Ninja_Cuu_Me_AndroidReady_FIXED.zip"
+
           test -s "$ZIP"
           echo "ZIP OK"
           ls -lh "$ZIP"
+
           unzip -t "$ZIP" >/dev/null
           unzip -l "$ZIP" | head -80
 
@@ -119,6 +121,53 @@ jobs:
 
           echo "Project and export preset found."
 
+      - name: Fix Android render configuration
+        shell: bash
+        run: |
+          set -e
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          p = Path("game/project.godot")
+          text = p.read_text(encoding="utf-8")
+
+          key = "textures/vram_compression/import_etc2_astc=true"
+          prefix = "textures/vram_compression/import_etc2_astc="
+
+          lines = text.splitlines()
+
+          # Remove existing ETC2/ASTC entries
+          lines = [line for line in lines if not line.startswith(prefix)]
+
+          # Find [rendering]
+          rendering_index = None
+
+          for i, line in enumerate(lines):
+              if line.strip() == "[rendering]":
+                  rendering_index = i
+                  break
+
+          if rendering_index is not None:
+              lines.insert(rendering_index + 1, key)
+          else:
+              if lines and lines[-1] != "":
+                  lines.append("")
+
+              lines.append("[rendering]")
+              lines.append(key)
+
+          p.write_text(
+              "\n".join(lines) + "\n",
+              encoding="utf-8"
+          )
+
+          print("Android render configuration fixed.")
+          PY
+
+          echo "=== ETC2/ASTC CONFIGURATION ==="
+          grep -n "textures/vram_compression/import_etc2_astc" game/project.godot
+
       - name: Configure Godot Android paths
         shell: bash
         run: |
@@ -164,7 +213,7 @@ jobs:
           echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
           echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
 
-          echo "Debug keystore ready: $KEYSTORE"
+          echo "Debug keystore ready."
 
       - name: Validate Godot Android preset
         shell: bash
