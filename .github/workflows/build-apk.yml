@@ -18,13 +18,19 @@ jobs:
       - name: Check repository files
         shell: bash
         run: |
+          set -e
+
           echo "=== ROOT ==="
           ls -lah
 
-          echo "=== ZIP ==="
+          echo "=== CHECK ZIP ==="
           test -f Ninja_Cuu_Me_AndroidReady_FIXED.zip
 
-          unzip -l Ninja_Cuu_Me_AndroidReady_FIXED.zip | head -40
+          echo "ZIP found:"
+          ls -lh Ninja_Cuu_Me_AndroidReady_FIXED.zip
+
+          echo "=== ZIP CONTENT ==="
+          unzip -l Ninja_Cuu_Me_AndroidReady_FIXED.zip | head -60
 
       - name: Setup Java 17
         uses: actions/setup-java@v4
@@ -32,51 +38,65 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      # Không dùng android-actions/setup-android ở đây.
+      # Runner Ubuntu đã có Android SDK, chỉ cần xác định đúng SDK path.
       - name: Configure Android SDK
         shell: bash
         run: |
+          set -e
+
           echo "ANDROID_HOME=$ANDROID_HOME"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-          if [ -z "$ANDROID_HOME" ]; then
-            export ANDROID_HOME="$ANDROID_SDK_ROOT"
+          SDK=""
+
+          if [ -n "${ANDROID_HOME:-}" ] && [ -d "$ANDROID_HOME" ]; then
+            SDK="$ANDROID_HOME"
+          elif [ -n "${ANDROID_SDK_ROOT:-}" ] && [ -d "$ANDROID_SDK_ROOT" ]; then
+            SDK="$ANDROID_SDK_ROOT"
+          elif [ -d "$HOME/android-sdk" ]; then
+            SDK="$HOME/android-sdk"
+          elif [ -d "/usr/local/lib/android/sdk" ]; then
+            SDK="/usr/local/lib/android/sdk"
           fi
 
-          if [ -z "$ANDROID_HOME" ]; then
-            export ANDROID_HOME="$RUNNER_TOOL_CACHE/android-sdk"
+          if [ -z "$SDK" ]; then
+            echo "ERROR: Android SDK directory was not found."
+            exit 1
           fi
 
-          echo "Using Android SDK: $ANDROID_HOME"
+          echo "Using Android SDK: $SDK"
 
-          mkdir -p "$ANDROID_HOME"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
 
-          if command -v sdkmanager >/dev/null 2>&1; then
-            echo "sdkmanager already available"
-            sdkmanager --version || true
+          if [ -f "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            echo "sdkmanager found:"
+            "$SDK/cmdline-tools/latest/bin/sdkmanager" --version || true
           else
-            echo "sdkmanager not found on PATH"
-            find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head
+            echo "WARNING: sdkmanager was not found at expected location."
           fi
 
       - name: Install Android SDK packages
         shell: bash
         run: |
-          SDKMANAGER=""
+          set -e
 
-          if command -v sdkmanager >/dev/null 2>&1; then
-            SDKMANAGER="$(command -v sdkmanager)"
-          elif [ -n "$ANDROID_HOME" ] && [ -f "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          elif [ -n "$ANDROID_SDK_ROOT" ] && [ -f "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDKMANAGER="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME" -name sdkmanager -type f 2>/dev/null | head -1)"
           fi
 
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager was not found."
+          if [ -z "$SDKMANAGER" ] || [ ! -f "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found."
+            find "$ANDROID_HOME" -maxdepth 5 -type f -name sdkmanager 2>/dev/null || true
             exit 1
           fi
 
-          echo "Using: $SDKMANAGER"
+          echo "Using sdkmanager: $SDKMANAGER"
 
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
 
@@ -84,6 +104,9 @@ jobs:
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0"
+
+          echo "=== INSTALLED ANDROID PACKAGES ==="
+          "$SDKMANAGER" --list_installed | head -100 || true
 
       - name: Setup Godot 4.6.3
         uses: chickensoft-games/setup-godot@v2
@@ -95,20 +118,20 @@ jobs:
       - name: Extract project
         shell: bash
         run: |
-          rm -rf game build
+          set -e
 
-          mkdir -p game
-          mkdir -p build
+          rm -rf game build
+          mkdir -p game build
 
           unzip -q Ninja_Cuu_Me_AndroidReady_FIXED.zip -d game
 
-          echo "=== Searching for project.godot ==="
+          echo "=== SEARCH PROJECT ==="
 
-          PROJECT_FILE="$(find game -maxdepth 4 -name project.godot -type f -print -quit)"
+          PROJECT_FILE="$(find game -maxdepth 5 -name project.godot -type f -print -quit)"
 
           if [ -z "$PROJECT_FILE" ]; then
-            echo "ERROR: project.godot was not found inside ZIP."
-            find game -maxdepth 4 -type f | head -100
+            echo "ERROR: project.godot was not found."
+            find game -maxdepth 5 -type f | head -150
             exit 1
           fi
 
@@ -117,43 +140,111 @@ jobs:
           PROJECT_DIR="$(dirname "$PROJECT_FILE")"
 
           if [ "$PROJECT_DIR" != "game" ]; then
-            echo "Project is inside: $PROJECT_DIR"
+            echo "Project is nested inside: $PROJECT_DIR"
 
-            mkdir -p game/project_tmp
+            TEMP_DIR="$(mktemp -d)"
 
-            shopt -s dotglob
-            cp -a "$PROJECT_DIR"/* game/project_tmp/
+            cp -a "$PROJECT_DIR"/. "$TEMP_DIR"/
 
             rm -rf game/*
-            cp -a game/project_tmp/* game/
-            rm -rf game/project_tmp
-          fi
 
-          echo "=== Project files ==="
-          ls -lah game
+            cp -a "$TEMP_DIR"/. game/
+
+            rm -rf "$TEMP_DIR"
+          fi
 
           test -f game/project.godot
           test -f game/export_presets.cfg
 
-      - name: Configure Godot Android paths
+          echo "=== PROJECT ROOT ==="
+          ls -lah game
+
+      - name: Configure Godot Android
         shell: bash
         run: |
+          set -e
+
           mkdir -p "$HOME/.config/godot"
 
           cat > "$HOME/.config/godot/editor_settings-4.tres" <<EOF
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
+
           export/android/java_sdk_path = "$JAVA_HOME"
           export/android/android_sdk_path = "$ANDROID_HOME"
           EOF
 
-          echo "Godot Android configuration:"
+          echo "=== GODOT SETTINGS ==="
           cat "$HOME/.config/godot/editor_settings-4.tres"
+
+      # ==========================================================
+      # CREATE DEBUG KEYSTORE
+      # ==========================================================
+      - name: Create Android debug keystore
+        shell: bash
+        run: |
+          set -e
+
+          KEYSTORE_DIR="$HOME/.android"
+          KEYSTORE="$KEYSTORE_DIR/debug.keystore"
+
+          mkdir -p "$KEYSTORE_DIR"
+
+          rm -f "$KEYSTORE"
+
+          keytool \
+            -genkeypair \
+            -v \
+            -keystore "$KEYSTORE" \
+            -storepass android \
+            -alias androiddebugkey \
+            -keypass android \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+          test -f "$KEYSTORE"
+
+          echo "ANDROID_DEBUG_KEYSTORE=$KEYSTORE" >> "$GITHUB_ENV"
+
+          echo "=== DEBUG KEYSTORE ==="
+          ls -lh "$KEYSTORE"
+
+      # ==========================================================
+      # FIX ANDROID EXPORT PRESET
+      # ==========================================================
+      - name: Configure Android export preset
+        shell: bash
+        run: |
+          set -e
+
+          cd game
+
+          echo "=== BEFORE ==="
+          grep -n "keystore/" export_presets.cfg || true
+
+          # Debug keystore
+          sed -i "s|^keystore/debug=.*|keystore/debug=\"$ANDROID_DEBUG_KEYSTORE\"|" export_presets.cfg
+          sed -i 's|^keystore/debug_user=.*|keystore/debug_user="androiddebugkey"|' export_presets.cfg
+          sed -i 's|^keystore/debug_password=.*|keystore/debug_password="android"|' export_presets.cfg
+
+          echo "=== AFTER ==="
+          grep -n "keystore/" export_presets.cfg || true
+
+          # Kiểm tra bắt buộc
+          grep -q 'keystore/debug="' export_presets.cfg
+          grep -q 'keystore/debug_user="androiddebugkey"' export_presets.cfg
+          grep -q 'keystore/debug_password="android"' export_presets.cfg
+
+          test -f "$ANDROID_DEBUG_KEYSTORE"
 
       - name: Validate Godot project
         shell: bash
         run: |
+          set -e
+
           cd game
 
           godot \
@@ -161,27 +252,40 @@ jobs:
             --editor \
             --quit-after 10
 
-      - name: Check Android export preset
+      - name: Check Android export configuration
         shell: bash
         run: |
+          set -e
+
           cd game
 
-          echo "=== Android export presets ==="
+          echo "=== GODOT ==="
+          godot --version
 
-          grep -n "Android" export_presets.cfg || true
+          echo "=== JAVA ==="
+          java -version
 
-          echo "=== Export presets ==="
+          echo "=== ANDROID SDK ==="
+          echo "$ANDROID_HOME"
 
-          cat export_presets.cfg
+          echo "=== ANDROID EXPORT PRESET ==="
+          grep -n -A80 -B5 '^\[preset\.' export_presets.cfg || true
+
+          echo "=== KEYSTORE ==="
+          ls -lh "$ANDROID_DEBUG_KEYSTORE"
 
       - name: Export debug APK
         shell: bash
         run: |
+          set -e
+
           cd game
 
           mkdir -p "$GITHUB_WORKSPACE/build"
 
           rm -f "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
+
+          echo "=== START ANDROID EXPORT ==="
 
           godot \
             --headless \
@@ -189,12 +293,19 @@ jobs:
             --export-debug "Android" \
             "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
-          if [ ! -s "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk" ]; then
-            echo "ERROR: APK was not created."
+          echo "=== CHECK APK ==="
+
+          if [ ! -f "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk" ]; then
+            echo "ERROR: APK file was not created."
             exit 1
           fi
 
-          echo "=== APK CREATED ==="
+          if [ ! -s "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk" ]; then
+            echo "ERROR: APK file is empty."
+            exit 1
+          fi
+
+          echo "=== APK CREATED SUCCESSFULLY ==="
           ls -lh "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
       - name: Upload APK
