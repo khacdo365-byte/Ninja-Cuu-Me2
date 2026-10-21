@@ -14,6 +14,7 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -38,17 +39,17 @@ jobs:
             exit 1
           fi
 
-          echo "Found sdkmanager: $SDKMANAGER"
+          echo "Found sdkmanager:"
+          echo "$SDKMANAGER"
 
-          SDKMANAGER_DIR="$(dirname "$SDKMANAGER")"
-          echo "$SDKMANAGER_DIR" >> "$GITHUB_PATH"
+          echo "$(dirname "$SDKMANAGER")" >> "$GITHUB_PATH"
 
-      - name: Install Android SDK packages
+      - name: Install Android SDK
         shell: bash
         run: |
           sdkmanager --version
 
-          yes | sdkmanager --licenses || true
+          yes | sdkmanager --licenses >/dev/null || true
 
           sdkmanager \
             "platform-tools" \
@@ -66,15 +67,20 @@ jobs:
         shell: bash
         run: |
           rm -rf game build
-          mkdir -p game build
+
+          mkdir -p game
+          mkdir -p build
 
           unzip -o Ninja_Cuu_Me_AndroidReady.zip -d game
 
-          test -f game/project.godot
+          if [ ! -f game/project.godot ]; then
+            echo "ERROR: project.godot not found"
+            exit 1
+          fi
 
-          echo "Game extracted successfully."
+          echo "Game project found."
 
-      - name: Configure Godot Android SDK
+      - name: Configure Android SDK for Godot
         shell: bash
         run: |
           mkdir -p "$HOME/.config/godot"
@@ -83,11 +89,14 @@ jobs:
           [gd_resource type="EditorSettings" format=3]
 
           [resource]
+
           export/android/android_sdk_path = "$ANDROID_HOME"
           export/android/debug_keystore = "$HOME/.android/debug.keystore"
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
           EOF
+
+          echo "Android SDK configured."
 
       - name: Create Android export preset
         shell: bash
@@ -132,9 +141,12 @@ jobs:
           screen/orientation=1
           EOF
 
-      - name: Check Godot
+          echo "Android export preset created."
+
+      - name: Check Godot project
         shell: bash
         run: |
+          echo "===== GODOT ====="
           godot --version
 
           echo "===== PROJECT ====="
@@ -146,6 +158,9 @@ jobs:
           echo "===== ARM64 ====="
           grep -n 'architectures/arm64-v8a=true' game/export_presets.cfg
 
+          echo "===== PORTRAIT ====="
+          grep -n 'screen/orientation=1' game/export_presets.cfg
+
       - name: Import Godot project
         shell: bash
         run: |
@@ -156,43 +171,49 @@ jobs:
             --editor \
             --quit-after 10
 
-      - name: Verify Android export templates
+      - name: Verify Android templates
         shell: bash
         run: |
-          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates"
+          TEMPLATE_ROOT="$HOME/.local/share/godot/export_templates"
 
-          echo "===== EXPORT TEMPLATES ====="
-          find "$TEMPLATE_DIR" -maxdepth 3 -type f 2>/dev/null || true
+          echo "===== SEARCHING TEMPLATES ====="
 
-          if ! find "$TEMPLATE_DIR" -type f -name "android_debug.apk" | grep -q .; then
-            echo "ERROR: android_debug.apk not found."
+          find "$TEMPLATE_ROOT" \
+            -type f \
+            \( -name "android_debug.apk" -o -name "android_release.apk" \) \
+            -print 2>/dev/null || true
+
+          DEBUG_TEMPLATE="$(find "$TEMPLATE_ROOT" -type f -name "android_debug.apk" 2>/dev/null | head -n 1)"
+
+          if [ -z "$DEBUG_TEMPLATE" ]; then
+            echo "ERROR: android_debug.apk was not found."
+            echo "Godot export templates are missing."
             exit 1
           fi
 
-          if ! find "$TEMPLATE_DIR" -type f -name "android_release.apk" | grep -q .; then
-            echo "ERROR: android_release.apk not found."
-            exit 1
-          fi
-
-          echo "Android export templates OK."
+          echo "Android debug template:"
+          echo "$DEBUG_TEMPLATE"
 
       - name: Export APK
         shell: bash
         run: |
-          rm -f build/Ninja-Cuu-Me.apk
+          rm -f "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
           godot \
             --headless \
-            --path game \
+            --path "$GITHUB_WORKSPACE/game" \
             --export-debug \
             "Android" \
             "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
           echo "===== APK RESULT ====="
 
-          test -f build/Ninja-Cuu-Me.apk
+          if [ ! -f "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk" ]; then
+            echo "ERROR: APK was not created."
+            exit 1
+          fi
 
-          ls -lh build/Ninja-Cuu-Me.apk
+          ls -lh "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
