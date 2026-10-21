@@ -19,7 +19,8 @@ jobs:
         shell: bash
         run: |
           set -e
-          ZIP="Ninja_Cuu_Me_AndroidReady_FIXED.zip"
+
+          ZIP="Ninja_Cuu_Me_AndroidReady_FIXED_V2.zip"
 
           test -s "$ZIP"
           echo "ZIP OK"
@@ -100,7 +101,7 @@ jobs:
           rm -rf game extracted build
           mkdir -p game extracted build
 
-          unzip -q Ninja_Cuu_Me_AndroidReady_FIXED.zip -d extracted
+          unzip -q Ninja_Cuu_Me_AndroidReady_FIXED_V2.zip -d extracted
 
           PROJECT_FILE="$(find extracted -name project.godot -type f -print -quit)"
 
@@ -121,150 +122,7 @@ jobs:
 
           echo "Project and export preset found."
 
-      - name: Fix Android render configuration
+      - name: Verify V2 project
         shell: bash
         run: |
           set -e
-
-          python3 <<'PY'
-          from pathlib import Path
-
-          p = Path("game/project.godot")
-          text = p.read_text(encoding="utf-8")
-
-          key = "textures/vram_compression/import_etc2_astc=true"
-          prefix = "textures/vram_compression/import_etc2_astc="
-
-          lines = text.splitlines()
-
-          # Remove existing ETC2/ASTC entries
-          lines = [line for line in lines if not line.startswith(prefix)]
-
-          # Find [rendering]
-          rendering_index = None
-
-          for i, line in enumerate(lines):
-              if line.strip() == "[rendering]":
-                  rendering_index = i
-                  break
-
-          if rendering_index is not None:
-              lines.insert(rendering_index + 1, key)
-          else:
-              if lines and lines[-1] != "":
-                  lines.append("")
-
-              lines.append("[rendering]")
-              lines.append(key)
-
-          p.write_text(
-              "\n".join(lines) + "\n",
-              encoding="utf-8"
-          )
-
-          print("Android render configuration fixed.")
-          PY
-
-          echo "=== ETC2/ASTC CONFIGURATION ==="
-          grep -n "textures/vram_compression/import_etc2_astc" game/project.godot
-
-      - name: Configure Godot Android paths
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p "$HOME/.config/godot"
-
-          godot \
-            --headless \
-            --editor \
-            --path "$GITHUB_WORKSPACE/game" \
-            --quit >/tmp/godot-init.log 2>&1 || true
-
-          cat /tmp/godot-init.log || true
-
-          echo "JAVA_HOME=$JAVA_HOME"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-
-      - name: Create debug keystore
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p "$HOME/.android"
-
-          KEYSTORE="$HOME/.android/debug.keystore"
-
-          rm -f "$KEYSTORE"
-
-          keytool -genkeypair -v \
-            -keystore "$KEYSTORE" \
-            -storepass android \
-            -alias androiddebugkey \
-            -keypass android \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -dname "CN=Android Debug,O=Android,C=US"
-
-          test -s "$KEYSTORE"
-
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PATH=$KEYSTORE" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_USER=androiddebugkey" >> "$GITHUB_ENV"
-          echo "GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD=android" >> "$GITHUB_ENV"
-
-          echo "Debug keystore ready."
-
-      - name: Validate Godot Android preset
-        shell: bash
-        run: |
-          set -e
-
-          grep -n '^\[preset\.0\]' game/export_presets.cfg
-          grep -n '^name="Android"' game/export_presets.cfg
-          grep -n '^platform="Android"' game/export_presets.cfg
-
-          godot \
-            --headless \
-            --path "$GITHUB_WORKSPACE/game" \
-            --editor \
-            --quit >/tmp/godot-validate.log 2>&1 || {
-              cat /tmp/godot-validate.log
-              exit 1
-            }
-
-          cat /tmp/godot-validate.log || true
-
-      - name: Export debug APK
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p build
-          rm -f build/Ninja-Cuu-Me.apk
-
-          godot \
-            --headless \
-            --path "$GITHUB_WORKSPACE/game" \
-            --export-debug "Android" \
-            "$GITHUB_WORKSPACE/build/Ninja-Cuu-Me.apk"
-
-          echo "=== BUILD OUTPUT ==="
-
-          find build \
-            -maxdepth 2 \
-            -type f \
-            -printf '%p %s bytes\n'
-
-          test -s build/Ninja-Cuu-Me.apk
-
-          file build/Ninja-Cuu-Me.apk
-          ls -lh build/Ninja-Cuu-Me.apk
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Ninja-Cuu-Me-APK
-          path: build/Ninja-Cuu-Me.apk
-          if-no-files-found: error
-          retention-days: 7
