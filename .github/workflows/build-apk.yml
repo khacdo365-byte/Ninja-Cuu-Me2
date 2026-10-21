@@ -51,12 +51,12 @@ jobs:
             mkdir -p game
             cp -a . game/
             rm -rf game/.git game/game game/build
-          elif [ -f Ninja_Cuu_Me_AndroidReady.zip ]; then
+          elif [ -f Ninja_Cuu_Me_AndroidReady_FIXED.zip ]; then
             echo "Project ZIP found; extracting it."
             mkdir -p game
-            unzip -o Ninja_Cuu_Me_AndroidReady.zip -d game
+            unzip -o Ninja_Cuu_Me_AndroidReady_FIXED.zip -d game
           else
-            echo "ERROR: project.godot and Ninja_Cuu_Me_AndroidReady.zip are both missing."
+            echo "ERROR: project.godot and Ninja_Cuu_Me_AndroidReady_FIXED.zip are both missing."
             exit 1
           fi
 
